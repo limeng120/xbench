@@ -1,9 +1,12 @@
 package cases
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -25,11 +28,15 @@ type contract struct {
 	amount      string
 	waitDeploy  int
 
-	config      *contracts.ContractConfig
-	contract    contracts.Contract
+	config   *contracts.ContractConfig
+	contract contracts.Contract
 
-	client      *xuper.XClient
-	accounts    []*account.Account
+	client   *xuper.XClient
+	accounts []*account.Account
+	encoders []*json.Encoder
+	output   string
+	sample   int
+	txindex  []int
 }
 
 func NewContract(config *Config) (Generator, error) {
@@ -38,22 +45,25 @@ func NewContract(config *Config) (Generator, error) {
 		waitDeploy = WaitDeploy
 	}
 
+	inputSample, _ := strconv.Atoi(config.Args["sample"])
 	t := &contract{
-		host: config.Host,
+		host:        config.Host,
 		concurrency: config.Concurrency,
-		split: 10,
-		amount: config.Args["amount"],
-		waitDeploy: waitDeploy,
+		split:       10,
+		amount:      config.Args["amount"],
+		waitDeploy:  waitDeploy,
 
 		config: &contracts.ContractConfig{
 			ContractAccount: config.Args["contract_account"],
-			CodePath: config.Args["code_path"],
+			CodePath:        config.Args["code_path"],
 
-			ModuleName: config.Args["module_name"],
+			ModuleName:   config.Args["module_name"],
 			ContractName: config.Args["contract_name"],
-			MethodName: config.Args["method_name"],
-			Args: config.Args,
+			MethodName:   config.Args["method_name"],
+			Args:         config.Args,
 		},
+		output: config.Args["output"],
+		sample: inputSample,
 	}
 
 	var err error
@@ -71,6 +81,17 @@ func NewContract(config *Config) (Generator, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get contract error: %v, contract=%s", err, t.config.ContractName)
 	}
+
+	t.encoders = make([]*json.Encoder, t.concurrency)
+	for i := 0; i < t.concurrency; i++ {
+		filename := fmt.Sprintf("contract.dat.%04d", i)
+		file, err := os.Create(filepath.Join(t.output, filename))
+		if err != nil {
+			return nil, fmt.Errorf("open output file error: %v", err)
+		}
+		t.encoders[i] = json.NewEncoder(file)
+	}
+	t.txindex = make([]int, t.concurrency)
 
 	log.Printf("generate: type=contract, contract=%s, concurrency=%d", t.config.ContractName, t.concurrency)
 	return t, nil
@@ -114,7 +135,7 @@ func (t *contract) Init() error {
 	log.Printf("deploy contract done")
 
 	// 等待部署合约完成
-	time.Sleep(time.Duration(t.waitDeploy)*time.Second)
+	time.Sleep(time.Duration(t.waitDeploy) * time.Second)
 
 	// 转账给调用合约的账户
 	_, err = lib.InitTransfer(t.client, lib.Bank, t.accounts, t.amount, t.split)
@@ -128,13 +149,25 @@ func (t *contract) Init() error {
 
 func (t *contract) Generate(id int) (proto.Message, error) {
 	from := t.accounts[id]
-	args := map[string]string {
+	args := map[string]string{
 		"id": strconv.Itoa(id),
 	}
 	tx, err := t.contract.Invoke(from, t.config.ContractName, t.config.MethodName, args, xuper.WithNotPost())
 	if err != nil {
 		log.Printf("generate tx error: %v, address=%s", err, from.Address)
 		return nil, err
+	}
+
+	// sample等于0 表示不采样
+	if t.sample != 0 {
+		t.txindex[id]++
+		if t.txindex[id] == t.sample {
+			if err := t.encoders[id].Encode(tx.Tx); err != nil {
+				log.Fatalf("write tx error: %v", err)
+				return nil, err
+			}
+			t.txindex[id] = 0
+		}
 	}
 
 	return tx.Tx, nil

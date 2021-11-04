@@ -1,8 +1,11 @@
 package cases
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -17,13 +20,20 @@ type evidence struct {
 	concurrency int
 	length      int
 
-	accounts    []*account.Account
+	accounts []*account.Account
+	encoders []*json.Encoder
+	output   string
+	sample   int
+	txindex  []int
 }
 
 func NewEvidence(config *Config) (Generator, error) {
+	inputSample, _ := strconv.Atoi(config.Args["sample"])
 	t := &evidence{
-		host: config.Host,
+		host:        config.Host,
 		concurrency: config.Concurrency,
+		output:      config.Args["output"],
+		sample:      inputSample,
 	}
 
 	var err error
@@ -37,6 +47,16 @@ func NewEvidence(config *Config) (Generator, error) {
 		return nil, fmt.Errorf("load account error: %v", err)
 	}
 
+	t.encoders = make([]*json.Encoder, t.concurrency)
+	for i := 0; i < t.concurrency; i++ {
+		filename := fmt.Sprintf("evidence.dat.%04d", i)
+		file, err := os.Create(filepath.Join(t.output, filename))
+		if err != nil {
+			return nil, fmt.Errorf("open output file error: %v", err)
+		}
+		t.encoders[i] = json.NewEncoder(file)
+	}
+	t.txindex = make([]int, t.concurrency)
 	log.Printf("generate: type=evidence, concurrency=%d, length=%d", t.concurrency, t.length)
 	return t, nil
 }
@@ -48,6 +68,18 @@ func (t *evidence) Init() error {
 func (t *evidence) Generate(id int) (proto.Message, error) {
 	ak := t.accounts[id]
 	tx := EvidenceTx(ak, t.length)
+	// sample等于0 表示不采样
+	if t.sample != 0 {
+		t.txindex[id]++
+		if t.txindex[id] == t.sample {
+			if err := t.encoders[id].Encode(tx); err != nil {
+				log.Fatalf("write tx error: %v", err)
+				return nil, err
+			}
+			t.txindex[id] = 0
+		}
+	}
+
 	return tx, nil
 }
 

@@ -1,0 +1,4 @@
+path: "output/data/xx"
+host: "127.0.0.1:36111"
+concurrency: 100
+benchmark: "short_content1"
