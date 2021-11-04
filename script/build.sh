@@ -13,6 +13,7 @@ function buildBench() {
 
     go build -o $Output/bin/xbench $WorkPath/cmd/xbench/main.go
     go build -o $Output/bin/generate $WorkPath/cmd/generate/main.go
+    go build -o $Output/bin/checker $WorkPath/cmd/checker/main.go
 
     cp -r $WorkPath/conf $Output
     cp -r $WorkPath/data $Output
