@@ -57,11 +57,13 @@ func (checker *Checker) CheckTx(id int, ch chan int) {
 		}
 		if err != nil {
 			log.Printf("read tx file error: %v", err)
+			break
 		}
 		totalTx++
 		chainTx, err := checker.client.QueryTxByID(hex.EncodeToString(tx.Txid))
 		if err != nil {
 			log.Printf("query tx error: %v", err)
+			continue
 		}
 		var x []byte
 		var y []byte
